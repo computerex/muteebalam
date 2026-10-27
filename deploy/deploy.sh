@@ -34,7 +34,7 @@ if [ -n "${SSH_KEY:-}" ]; then
   SCP_CMD+=(-i "${SSH_KEY}" -o IdentitiesOnly=yes)
 fi
 TAR_EXCLUDES=(--exclude='.git' --exclude='./deploy' --exclude='_audit*.html'
-              --exclude='.DS_Store' --exclude='._*' --exclude='*.secret')
+              --exclude='.DS_Store' --exclude='*.secret')
 
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -86,14 +86,19 @@ c_green "    snapshot: ${BACKUP_DIR:-<none>}"
 # ── 2. upload site ───────────────────────────────────────────────────
 # A tar pipeline is used instead of rsync: macOS ships openrsync (protocol
 # 29) which rejects several GNU rsync flags, and tar behaves identically
-# everywhere. The remote extract is preceded by a guarded clear so removed
-# files don't linger.
+# everywhere. COPYFILE_DISABLE=1 + --no-xattrs stop macOS bsdtar from
+# emitting AppleDouble "._*" sidecars and LIBARCHIVE xattr headers — an
+# --exclude pattern cannot suppress those, they are generated at
+# archive-write time rather than matched as pathnames.
 c_blue "==> Uploading site files"
-tar -czf - -C "${LOCAL_ROOT}" "${TAR_EXCLUDES[@]}" . \
+COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "${LOCAL_ROOT}" "${TAR_EXCLUDES[@]}" . \
   | remote "set -e
            mkdir -p '${REMOTE_ROOT}'
            find '${REMOTE_ROOT}' -mindepth 1 -delete
-           tar -xzf - -C '${REMOTE_ROOT}'"
+           tar -xzf - -C '${REMOTE_ROOT}'
+           # belt and braces: drop any AppleDouble files that slipped through
+           find '${REMOTE_ROOT}' -name '._*' -delete
+           find '${REMOTE_ROOT}' -name '.DS_Store' -delete"
 
 remote "set -e
         find '${REMOTE_ROOT}' -type d -exec chmod 755 {} +

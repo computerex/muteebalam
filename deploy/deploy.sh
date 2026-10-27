@@ -9,10 +9,11 @@
 #  Usage:
 #      ./deploy/deploy.sh                     # full deploy
 #      ./deploy/deploy.sh --files-only        # upload, skip certbot
-#      HOST=root@1.2.3.4 ./deploy/deploy.sh   # override target
+#      HOST=root@1.2.3.4  ./deploy/deploy.sh  # override target
+#      SSH_KEY=~/.ssh/x   ./deploy/deploy.sh  # override identity
 #
-#  Requirements on the local machine : rsync + ssh
-#  Requirements on the server        : nginx, certbot, sudo as root
+#  Local requirements : rsync + ssh
+#  Server requirements: nginx, certbot, root access
 # =====================================================================
 set -euo pipefail
 
@@ -25,43 +26,82 @@ NGINX_ENABLED="/etc/nginx/sites-enabled/${DOMAIN}.conf"
 ACME_EMAIL="${ACME_EMAIL:-mohd.ali.el@gmail.com}"
 MODE="${1:-full}"
 
+# Optional identity override: SSH_KEY=/path/to/key ./deploy/deploy.sh
+SSH_CMD=(ssh -o ConnectTimeout=12 -o BatchMode=yes)
+SCP_CMD=(scp -q -o ConnectTimeout=12 -o BatchMode=yes)
+if [ -n "${SSH_KEY:-}" ]; then
+  SSH_CMD+=(-i "${SSH_KEY}" -o IdentitiesOnly=yes)
+  SCP_CMD+=(-i "${SSH_KEY}" -o IdentitiesOnly=yes)
+fi
+RSYNC_SSH="$(printf '%q ' "${SSH_CMD[@]}")"
+
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 c_green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 c_blue()  { printf '\033[0;34m%s\033[0m\n' "$*"; }
 c_warn()  { printf '\033[0;33m%s\033[0m\n' "$*"; }
+c_err()   { printf '\033[0;31m%s\033[0m\n' "$*"; }
+
+remote() { "${SSH_CMD[@]}" "${HOST}" "$@"; }
 
 c_blue "==> Target: ${HOST}   domain: ${DOMAIN}   root: ${REMOTE_ROOT}"
 
 # ── 0. sanity ────────────────────────────────────────────────────────
-ssh -o ConnectTimeout=12 -o BatchMode=yes "${HOST}" 'echo ok' >/dev/null 2>&1 \
-  || { c_warn "Cannot reach ${HOST} over SSH. Deploy aborted."; exit 1; }
+if ! remote 'echo ok' >/dev/null 2>&1; then
+  c_err "Cannot authenticate to ${HOST} over SSH. Deploy aborted — nothing was changed."
+  cat <<'EOS'
+
+  Fix SSH access first, then re-run. Any one of these works:
+
+  (a) install this machine's public key on the server (one time, asks for password):
+
+        ssh-copy-id -i ~/.ssh/id_ed25519.pub root@137.184.210.97
+
+  (b) add the key in the DigitalOcean control panel
+      (Settings -> Security -> SSH Keys) and ensure the droplet has it in
+      /root/.ssh/authorized_keys,
+
+  (c) point the script at a working key or host:
+
+        SSH_KEY=~/.ssh/other_key ./deploy/deploy.sh
+        HOST=root@1.2.3.4        ./deploy/deploy.sh
+
+  Verify with:  ssh root@137.184.210.97 'echo ok'
+
+EOS
+  exit 1
+fi
 
 # ── 1. directories ───────────────────────────────────────────────────
 c_blue "==> Preparing directories"
-ssh "${HOST}" "mkdir -p '${REMOTE_ROOT}' '${ACME_ROOT}/.well-known/acme-challenge'"
+remote "mkdir -p '${REMOTE_ROOT}' '${ACME_ROOT}/.well-known/acme-challenge'
+        chmod 755 '${ACME_ROOT}' '${ACME_ROOT}/.well-known' '${ACME_ROOT}/.well-known/acme-challenge'"
 
 # ── 2. upload site ───────────────────────────────────────────────────
 c_blue "==> Uploading site files"
-rsync -az --delete --info=stats2 \
+rsync -az --delete --info=stats2 -e "${RSYNC_SSH}" \
   --exclude '.git/' \
   --exclude 'deploy/' \
   --exclude '_audit.html' \
+  --exclude '_audit2.html' \
   --exclude '.DS_Store' \
   --exclude '*.secret' \
   "${LOCAL_ROOT}/" "${HOST}:${REMOTE_ROOT}/"
 
-ssh "${HOST}" "chown -R www-data:www-data '${REMOTE_ROOT}' 2>/dev/null || chown -R nginx:nginx '${REMOTE_ROOT}'; find '${REMOTE_ROOT}' -type d -exec chmod 755 {} +; find '${REMOTE_ROOT}' -type f -exec chmod 644 {} +"
+remote "set -e
+        find '${REMOTE_ROOT}' -type d -exec chmod 755 {} +
+        find '${REMOTE_ROOT}' -type f -exec chmod 644 {} +
+        if id www-data >/dev/null 2>&1; then chown -R www-data:www-data '${REMOTE_ROOT}'
+        elif id nginx >/dev/null 2>&1; then chown -R nginx:nginx '${REMOTE_ROOT}'; fi"
 
-# ── 3. nginx: bootstrap vhost (HTTP only, for ACME) ──────────────────
+# ── 3. nginx: bootstrap vhost (HTTP only, so ACME can be answered) ───
 c_blue "==> Installing bootstrap vhost (HTTP only)"
-scp -q "${LOCAL_ROOT}/deploy/nginx/${DOMAIN}.http.conf" "${HOST}:${NGINX_AVAILABLE}"
+"${SCP_CMD[@]}" "${LOCAL_ROOT}/deploy/nginx/${DOMAIN}.http.conf" "${HOST}:${NGINX_AVAILABLE}"
 
-ssh "${HOST}" "set -e
-  ln -sfn '${NGINX_AVAILABLE}' '${NGINX_ENABLED}'
-  nginx -t
-  systemctl reload nginx 2>/dev/null || service nginx reload
-"
+remote "set -e
+        ln -sfn '${NGINX_AVAILABLE}' '${NGINX_ENABLED}'
+        nginx -t
+        systemctl reload nginx 2>/dev/null || service nginx reload"
 c_green "    bootstrap vhost live"
 
 if [ "${MODE}" = "--files-only" ]; then
@@ -69,37 +109,39 @@ if [ "${MODE}" = "--files-only" ]; then
   exit 0
 fi
 
-# ── 4. certificate ───────────────────────────────────────────────────
+# ── 4. certificate (brand new, HTTP-01 via webroot) ──────────────────
 c_blue "==> Requesting Let's Encrypt certificate"
-ssh "${HOST}" "set -e
-  if [ -d '/etc/letsencrypt/live/${DOMAIN}' ]; then
-    echo '    existing certificate found — renewing/expanding'
-    certbot certonly --webroot -w '${ACME_ROOT}' -d '${DOMAIN}' \
-      --email '${ACME_EMAIL}' --agree-tos --no-eff-email \
-      --keep-until-expiring --expand --non-interactive
-  else
-    certbot certonly --webroot -w '${ACME_ROOT}' -d '${DOMAIN}' \
-      --email '${ACME_EMAIL}' --agree-tos --no-eff-email \
-      --non-interactive
-  fi
-"
-c_green "    certificate issued"
+remote "set -e
+        if [ -d '/etc/letsencrypt/live/${DOMAIN}' ]; then
+          echo '    existing certificate found — keeping it if still valid'
+          certbot certonly --webroot -w '${ACME_ROOT}' -d '${DOMAIN}' \
+            --email '${ACME_EMAIL}' --agree-tos --no-eff-email \
+            --keep-until-expiring --expand --non-interactive
+        else
+          certbot certonly --webroot -w '${ACME_ROOT}' -d '${DOMAIN}' \
+            --email '${ACME_EMAIL}' --agree-tos --no-eff-email \
+            --non-interactive
+        fi"
+c_green "    certificate ready"
 
 # ── 5. nginx: final vhost (HTTPS) ────────────────────────────────────
 c_blue "==> Installing final HTTPS vhost"
-scp -q "${LOCAL_ROOT}/deploy/nginx/${DOMAIN}.conf" "${HOST}:${NGINX_AVAILABLE}"
+"${SCP_CMD[@]}" "${LOCAL_ROOT}/deploy/nginx/${DOMAIN}.conf" "${HOST}:${NGINX_AVAILABLE}"
 
-ssh "${HOST}" "set -e
-  nginx -t
-  systemctl reload nginx 2>/dev/null || service nginx reload
-"
+remote "set -e
+        nginx -t
+        systemctl reload nginx 2>/dev/null || service nginx reload"
 c_green "    HTTPS vhost live"
 
 # ── 6. verify ────────────────────────────────────────────────────────
 c_blue "==> Verifying"
-ssh "${HOST}" "ls -1 /etc/letsencrypt/live/${DOMAIN}/"
+remote "ls -1 /etc/letsencrypt/live/${DOMAIN}/"
 echo
-curl -s -o /dev/null -w "  http  -> %{http_code} (redirect: %{redirect_url})\n"  "http://${DOMAIN}/"  || true
+curl -s -o /dev/null -w "  http  -> %{http_code}  redirect=%{redirect_url}\n" "http://${DOMAIN}/" || true
 curl -s -o /dev/null -w "  https -> %{http_code}  %{size_download} bytes  %{time_total}s\n" "https://${DOMAIN}/" || true
+echo
+echo "  serving certificate:"
+echo | openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates 2>/dev/null | sed 's/^/    /' || true
 
 c_green "==> Done. https://${DOMAIN}"

@@ -1,1 +1,26 @@
-public
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs & temp
+*.log
+.harness_output/
+tmp/
+.tmp/
+
+# Deployment / secrets — never commit
+.env
+.env.*
+credentials.ini
+*.pem
+*.key
+deploy/*.secret

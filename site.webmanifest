@@ -1,0 +1,14 @@
+{
+  "name": "Syed Muteeb Alam — Information Security Analyst",
+  "short_name": "Muteeb Alam",
+  "description": "Information Security Analyst and SOC Analyst — threat detection, incident response, digital forensics and SIEM operations.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070b12",
+  "theme_color": "#070b12",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "images/apple-touch-icon.jpg", "sizes": "180x180", "type": "image/jpeg" }
+  ]
+}

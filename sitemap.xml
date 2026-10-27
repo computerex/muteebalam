@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
+  <url>
+    <loc>https://muteebalam.com/</loc>
+    <lastmod>2026-10-27</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/headshot.jpg</image:loc>
+      <image:title>Syed Muteeb Alam — Information Security Analyst</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/btl1.jpg</image:loc>
+      <image:title>Security Blue Team Level 1 (BTL1) certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/cysa.jpg</image:loc>
+      <image:title>CompTIA Cybersecurity Analyst (CySA+) certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/cnsp.jpg</image:loc>
+      <image:title>Certified Network Security Practitioner (CNSP) certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/isc2-cc.jpg</image:loc>
+      <image:title>ISC2 Certified in Cybersecurity (CC) certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/dfe.jpg</image:loc>
+      <image:title>EC-Council Digital Forensics Essentials certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/ehe.jpg</image:loc>
+      <image:title>EC-Council Ethical Hacking Essentials certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/cisco-labs.jpg</image:loc>
+      <image:title>EC-Council Cisco LABS Crash Course certificate</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://muteebalam.com/images/certs/nde.jpg</image:loc>
+      <image:title>EC-Council Network Defense Essentials certificate</image:title>
+    </image:image>
+  </url>
+</urlset>

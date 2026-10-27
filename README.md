@@ -90,8 +90,9 @@ Any static file server works.
 
 ## Deployment
 
-Prerequisites: `rsync` + `ssh` locally; `nginx`, `certbot` and root access on
-the server.
+Prerequisites: `ssh` locally; `nginx`, `certbot` and root access on the server.
+(The upload uses a `tar` pipeline rather than `rsync`, because macOS ships
+`openrsync` which rejects several GNU rsync flags.)
 
 ```bash
 ./deploy/deploy.sh
@@ -99,26 +100,41 @@ the server.
 
 The script:
 
-1. Confirms SSH access.
-2. Creates `/var/www/muteebalam.com` and `/var/www/letsencrypt`.
-3. `rsync`s the site (excluding `.git/`, `deploy/` and audit files).
-4. Installs the **HTTP-only** vhost and reloads nginx so ACME can be answered.
-5. Runs `certbot certonly --webroot` to issue a brand-new certificate for
+1. Confirms SSH access and aborts before changing anything if it fails.
+2. Snapshots `/etc/nginx/sites-available` to `/root/nginx-backup-<timestamp>`.
+3. Creates `/var/www/muteebalam.com` and `/var/www/letsencrypt`.
+4. Uploads the site via `tar` over SSH (AppleDouble `._*` files excluded).
+5. Installs the **HTTP-only** vhost and reloads nginx so ACME can be answered.
+6. Runs `certbot certonly --webroot` to issue a brand-new certificate for
    `muteebalam.com`.
-6. Swaps in the **HTTPS** vhost, tests and reloads nginx.
-7. Verifies the HTTP redirect and the HTTPS response.
+7. Swaps in the **HTTPS** vhost, validates with `nginx -t`, then reloads —
+   rolling back to the HTTP-only vhost if validation fails.
+8. Verifies the redirect, the HTTPS response and the served certificate.
+
+### Live environment (as deployed)
+
+| | |
+| --- | --- |
+| Host | `137.184.210.97` (`orbiter-mods.com`, DigitalOcean) |
+| OS | Ubuntu 20.04.4 LTS |
+| nginx | 1.18.0 — requires `listen 443 ssl http2`, **not** the newer `http2 on;` |
+| certbot | 0.40.0, `certbot.timer` enabled |
+| Docroot | `/var/www/muteebalam.com` (39 files, ~3.6 MB) |
+| Certificate | `/etc/letsencrypt/live/muteebalam.com/` — Let's Encrypt, 90 days, HTTP-01 webroot |
+| Co-existing sites | 17 other vhosts on the same server, all untouched |
 
 ### Non-disruptive by design
 
 - The vhost is a **new file**: `/etc/nginx/sites-available/muteebalam.com.conf`,
-  enabled by symlink. No other `sites-enabled` entry is read or modified.
+  enabled by symlink. No other `sites-enabled` entry is read or modified —
+  verified with a recursive `diff` against the pre-deploy snapshot.
 - `nginx -t` runs before every reload, and the reload is a *reload*
-  (`systemctl reload nginx`), not a restart — existing connections to other
+  (`systemctl reload nginx`), not a restart, so existing connections to other
   sites are unaffected.
-- If `nginx -t` fails, the script stops before reloading, so a bad config can
-  never take the server down.
-- The certificate is issued with `certonly`, so certbot does not edit any
-  nginx configuration on its own.
+- If `nginx -t` fails, the script restores the previous vhost and reloads, so a
+  bad config can never be left enabled.
+- The certificate is issued with `certonly`, so certbot does not edit any nginx
+  configuration on its own.
 
 ### Renewal
 

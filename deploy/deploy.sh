@@ -33,7 +33,8 @@ if [ -n "${SSH_KEY:-}" ]; then
   SSH_CMD+=(-i "${SSH_KEY}" -o IdentitiesOnly=yes)
   SCP_CMD+=(-i "${SSH_KEY}" -o IdentitiesOnly=yes)
 fi
-RSYNC_SSH="$(printf '%q ' "${SSH_CMD[@]}")"
+TAR_EXCLUDES=(--exclude='.git' --exclude='./deploy' --exclude='_audit*.html'
+              --exclude='.DS_Store' --exclude='._*' --exclude='*.secret')
 
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -72,27 +73,34 @@ EOS
   exit 1
 fi
 
-# ── 1. directories ───────────────────────────────────────────────────
+# ── 1. directories + config snapshot ─────────────────────────────────
 c_blue "==> Preparing directories"
 remote "mkdir -p '${REMOTE_ROOT}' '${ACME_ROOT}/.well-known/acme-challenge'
         chmod 755 '${ACME_ROOT}' '${ACME_ROOT}/.well-known' '${ACME_ROOT}/.well-known/acme-challenge'"
 
+c_blue "==> Snapshotting current nginx configs (rollback point)"
+BACKUP_DIR="$(remote "mkdir -p /root/nginx-backup-\$(date +%Y%m%d-%H%M%S) && echo /root/nginx-backup-\$(date +%Y%m%d-%H%M%S)" || true)"
+remote "cp -a /etc/nginx/sites-available/. '${BACKUP_DIR:-/tmp}/' 2>/dev/null || true"
+c_green "    snapshot: ${BACKUP_DIR:-<none>}"
+
 # ── 2. upload site ───────────────────────────────────────────────────
+# A tar pipeline is used instead of rsync: macOS ships openrsync (protocol
+# 29) which rejects several GNU rsync flags, and tar behaves identically
+# everywhere. The remote extract is preceded by a guarded clear so removed
+# files don't linger.
 c_blue "==> Uploading site files"
-rsync -az --delete --info=stats2 -e "${RSYNC_SSH}" \
-  --exclude '.git/' \
-  --exclude 'deploy/' \
-  --exclude '_audit.html' \
-  --exclude '_audit2.html' \
-  --exclude '.DS_Store' \
-  --exclude '*.secret' \
-  "${LOCAL_ROOT}/" "${HOST}:${REMOTE_ROOT}/"
+tar -czf - -C "${LOCAL_ROOT}" "${TAR_EXCLUDES[@]}" . \
+  | remote "set -e
+           mkdir -p '${REMOTE_ROOT}'
+           find '${REMOTE_ROOT}' -mindepth 1 -delete
+           tar -xzf - -C '${REMOTE_ROOT}'"
 
 remote "set -e
         find '${REMOTE_ROOT}' -type d -exec chmod 755 {} +
         find '${REMOTE_ROOT}' -type f -exec chmod 644 {} +
         if id www-data >/dev/null 2>&1; then chown -R www-data:www-data '${REMOTE_ROOT}'
-        elif id nginx >/dev/null 2>&1; then chown -R nginx:nginx '${REMOTE_ROOT}'; fi"
+        elif id nginx >/dev/null 2>&1; then chown -R nginx:nginx '${REMOTE_ROOT}'; fi
+        echo \"    \$(find '${REMOTE_ROOT}' -type f | wc -l) files, \$(du -sh '${REMOTE_ROOT}' | cut -f1)\""
 
 # ── 3. nginx: bootstrap vhost (HTTP only, so ACME can be answered) ───
 c_blue "==> Installing bootstrap vhost (HTTP only)"
@@ -125,13 +133,23 @@ remote "set -e
 c_green "    certificate ready"
 
 # ── 5. nginx: final vhost (HTTPS) ────────────────────────────────────
+# The config is validated before reloading. If it does not validate the
+# script restores the bootstrap file and reloads, so a broken config can
+# never be left enabled.
 c_blue "==> Installing final HTTPS vhost"
 "${SCP_CMD[@]}" "${LOCAL_ROOT}/deploy/nginx/${DOMAIN}.conf" "${HOST}:${NGINX_AVAILABLE}"
 
-remote "set -e
-        nginx -t
-        systemctl reload nginx 2>/dev/null || service nginx reload"
-c_green "    HTTPS vhost live"
+if remote "nginx -t" >/dev/null 2>&1; then
+  remote "systemctl reload nginx 2>/dev/null || service nginx reload"
+  c_green "    HTTPS vhost live"
+else
+  c_err "nginx rejected the final config — restoring the HTTP-only vhost"
+  remote "cat /tmp/nginxt.log 2>/dev/null || true"
+  "${SCP_CMD[@]}" "${LOCAL_ROOT}/deploy/nginx/${DOMAIN}.http.conf" "${HOST}:${NGINX_AVAILABLE}"
+  remote "nginx -t && (systemctl reload nginx 2>/dev/null || service nginx reload)"
+  c_warn "rolled back; site still reachable over HTTP. Certificate is installed and valid."
+  exit 1
+fi
 
 # ── 6. verify ────────────────────────────────────────────────────────
 c_blue "==> Verifying"
@@ -145,3 +163,6 @@ echo | openssl s_client -connect "${DOMAIN}:443" -servername "${DOMAIN}" 2>/dev/
   | openssl x509 -noout -subject -issuer -dates 2>/dev/null | sed 's/^/    /' || true
 
 c_green "==> Done. https://${DOMAIN}"
+echo
+c_warn "Renewal is automatic via certbot.timer. To verify it manually (can take ~30s):"
+echo "    ssh ${HOST} 'certbot renew --dry-run --cert-name ${DOMAIN}'"

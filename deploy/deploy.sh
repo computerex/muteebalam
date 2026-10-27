@@ -7,10 +7,13 @@
 #  certificate with certbot over HTTP-01 / webroot.
 #
 #  Usage:
-#      ./deploy/deploy.sh                     # full deploy
-#      ./deploy/deploy.sh --files-only        # upload, skip certbot
-#      HOST=root@1.2.3.4  ./deploy/deploy.sh  # override target
-#      SSH_KEY=~/.ssh/x   ./deploy/deploy.sh  # override identity
+#      ACME_EMAIL=you@example.com ./deploy/deploy.sh   # full deploy
+#      ./deploy/deploy.sh --files-only                 # upload, skip certbot
+#      HOST=root@1.2.3.4  ./deploy/deploy.sh           # override target
+#      SSH_KEY=~/.ssh/x   ./deploy/deploy.sh           # override identity
+#
+#  The ACME contact email is intentionally NOT committed; pass it in the
+#  environment so no personal address is published in this repository.
 #
 #  Local requirements : rsync + ssh
 #  Server requirements: nginx, certbot, root access
@@ -23,7 +26,7 @@ REMOTE_ROOT="/var/www/${DOMAIN}"
 ACME_ROOT="/var/www/letsencrypt"
 NGINX_AVAILABLE="/etc/nginx/sites-available/${DOMAIN}.conf"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${DOMAIN}.conf"
-ACME_EMAIL="${ACME_EMAIL:-mohd.ali.el@gmail.com}"
+ACME_EMAIL="${ACME_EMAIL:-}"
 MODE="${1:-full}"
 
 # Optional identity override: SSH_KEY=/path/to/key ./deploy/deploy.sh
@@ -123,6 +126,12 @@ if [ "${MODE}" = "--files-only" ]; then
 fi
 
 # ── 4. certificate (brand new, HTTP-01 via webroot) ──────────────────
+if [ -z "${ACME_EMAIL}" ]; then
+  c_err "ACME_EMAIL is not set — certbot needs a contact address for expiry notices."
+  echo "    Re-run as:  ACME_EMAIL=you@example.com ./deploy/deploy.sh"
+  echo "    (kept out of the repo so no personal address is published)"
+  exit 1
+fi
 c_blue "==> Requesting Let's Encrypt certificate"
 remote "set -e
         if [ -d '/etc/letsencrypt/live/${DOMAIN}' ]; then

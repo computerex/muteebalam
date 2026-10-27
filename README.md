@@ -95,8 +95,11 @@ Prerequisites: `ssh` locally; `nginx`, `certbot` and root access on the server.
 `openrsync` which rejects several GNU rsync flags.)
 
 ```bash
-./deploy/deploy.sh
+ACME_EMAIL=you@example.com ./deploy/deploy.sh
 ```
+
+The ACME contact address is deliberately not committed — pass it in the
+environment so no personal email is published in this repository.
 
 The script:
 
@@ -154,7 +157,7 @@ Everything lives in `index.html`:
 | To change | Look for |
 | --- | --- |
 | Email address | `mailto:syedmuteebalam@gmail.com` and `data-email="…"` on the copy button |
-| LinkedIn URL | `https://www.linkedin.com/in/syed-muteeb-alam/` |
+| LinkedIn URL | `https://www.linkedin.com/in/syed-muteeb-alam-a18157260/` |
 | Job titles / dates | the `Experience` section `<ol class="timeline">` |
 | A certificate | the `.cert-grid` block — each `<button class="cert-card">` has `data-full`, `data-title` and `data-issuer` |
 | Skills | the `.skills` aside |
@@ -164,11 +167,6 @@ the JSON-LD `Person` block in `<head>` if the role changes.
 
 ## Notes / follow-ups
 
-- **Verify the LinkedIn URL.** The slug was not available from the repository,
-  so `https://www.linkedin.com/in/syed-muteeb-alam/` is a best-guess in the
-  usual `firstname-lastname` form. Replace it in the Contact section
-  (two places: `hero`-adjacent contact list and the JSON-LD/`sameAs` if added)
-  with the real profile URL if it differs.
 - **CHFI has no scan.** The Computer Hacking Forensic Investigator certificate
   was announced as a PDF on LinkedIn; no image was available, so it appears as
   a designed "featured credential" card rather than a gallery item. Drop a scan
